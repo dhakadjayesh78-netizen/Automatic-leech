@@ -43,7 +43,7 @@ jobs:
 
       - name: Clean File(s)
         run: |
-          for file in README.md wzv3_hk_deploy.ipynb; do
+          for file in README.md ssleech_hk_deploy.ipynb; do
             [ -f "$file" ] && echo "Deleting: $file" && rm -f "$file" || echo "Not found: $file"
           done
 
