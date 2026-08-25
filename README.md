@@ -1,5 +1,5 @@
 <div align="center">
-<img src="https://te.legra.ph/file/c45e3fc9cba60c15f7cb5-9db34c454ba90b2640.jpg" alt="SSLeech Telegram bot thumbnail" width="760">
+<img src="assets/ssleech-thumbnail.jpg" alt="SSLeech Telegram bot thumbnail" width="760">
 
 # SSLeech — Heroku Deploy 
 
