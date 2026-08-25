@@ -1,4 +1,4 @@
-name: Deploy WZML-X to Heroku 
+name: Deploy SSLeech Bot to Heroku 
 
 on:
   workflow_dispatch:
