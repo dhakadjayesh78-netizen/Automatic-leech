@@ -1,0 +1,34 @@
+name: Auto Website Scraper
+
+on:
+  schedule:
+    - cron: '0 * * * *' # यह हर 1 घंटे में बोट को अपने आप चालू करेगा
+  workflow_dispatch: # इससे आप जब चाहें बटन दबाकर भी बोट चालू कर सकते हैं
+
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        pip install requests beautifulsoup4 cloudscraper lxml httpx telethon motor
+
+    - name: Run Scraper Script
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        TELEGRAM_API: ${{ secrets.TELEGRAM_API }}
+        TELEGRAM_HASH: ${{ secrets.TELEGRAM_HASH }}
+        TARGET_SCRAPE_URL: "https://archive.org"
+      run: |
+        python scraper.py
+        
