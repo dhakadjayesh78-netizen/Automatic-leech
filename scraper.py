@@ -4,15 +4,51 @@ import cloudscraper
 import httpx
 from bs4 import BeautifulSoup
 
-# एनवायरनमेंट वेरिएबल से वेबसाइट लिंक उठाना (डिफ़ॉल्ट रूप से एक लीगल आर्काइव सेट है)
-TARGET_URL = os.environ.get("TARGET_SCRAPE_URL", "https://archive.org")
+# एनवायरनमेंट वेरिएबल से वेबसाइट लिंक उठाना (डिफ़ॉल्ट रूप से नेटमिरर सेट है)
+TARGET_URL = os.environ.get("TARGET_SCRAPE_URL", "https://netmirror.center/")
+
+def extract_netmirror_data(html_content, base_url):
+    """HTML कंटेंट में से वीडियो प्लेयर और डाउनलोड लिंक्स निकालने का हेल्पर फंक्शन"""
+    soup = BeautifulSoup(html_content, 'lxml')
+    stream_links = []
+    download_links = []
+
+    # 1. वीडियो प्लेयर के लिंक्स ढूंढना (<video src="...">)
+    for video in soup.find_all('video'):
+        src = video.get('src')
+        if src:
+            if src.startswith('/'):
+                src = base_url.rstrip('/') + src
+            if src not in stream_links:
+                stream_links.append(src)
+
+    # 2. डाउनलोड लिंक्स ढूंढना (<a class="download-link" href="..."> या .mp4/.mkv लिंक्स)
+    for anchor in soup.find_all('a'):
+        link = anchor.get('href')
+        link_class = anchor.get('class', [])
+        
+        if link:
+            # अगर क्लास 'download-link' है या लिंक के अंत में वीडियो फॉर्मेट है
+            if 'download-link' in link_class or link.endswith('.mp4') or link.endswith('.mkv') or '.mp4?' in link:
+                if link.startswith('/'):
+                    link = base_url.rstrip('/') + link
+                if link not in download_links:
+                    download_links.append(link)
+
+    return {
+        "stream_links": stream_links,
+        "download_links": download_links
+    }
 
 def get_latest_links():
-    links = []
+    # अब यह फंक्शन एक डिक्शनरी रिटर्न करेगा जिसमें दोनों लिस्ट होंगी
+    result_data = {"stream_links": [], "download_links": []}
     
+    # बेस यूआरएल सेट करना ताकि रिलेटिव पाथ (/details...) पूरे यूआरएल बन सकें
+    base_url = TARGET_URL.split('/details')[0] if '/details' in TARGET_URL else TARGET_URL
+
     # 1. पहला सुरक्षा बाईपास प्रयास (Cloudscraper का उपयोग)
     try:
-        # यह क्लाउडफ्लेयर एंटी-बोट प्रोटेक्शन को बाईपास करने की कोशिश करता है
         scraper = cloudscraper.create_scraper(
             browser={
                 'browser': 'chrome',
@@ -23,19 +59,10 @@ def get_latest_links():
         response = scraper.get(TARGET_URL, timeout=20)
         
         if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'lxml')
-            for anchor in soup.find_all('a'):
-                link = anchor.get('href')
-                if link and (link.endswith('.mp4') or link.endswith('.mkv')):
-                    if link.startswith('/'):
-                        # लिंक को पूरा डोमेन यूआरएल देना
-                        base_url = TARGET_URL.split('/details')[0] if '/details' in TARGET_URL else TARGET_URL
-                        link = base_url + link
-                    if link not in links:
-                        links.append(link)
-            if links:
-                print(f"[Scraper] Cloudscraper के जरिए कुल {len(links)} लिंक्स मिले।")
-                return links
+            extracted = extract_netmirror_data(response.text, base_url)
+            if extracted["stream_links"] or extracted["download_links"]:
+                print(f"[Scraper] Cloudscraper के जरिए कुल {len(extracted['stream_links'])} प्लेयर और {len(extracted['download_links'])} डाउनलोड लिंक्स मिले।")
+                return extracted
     except Exception as e:
         print(f"[Scraper Warning] Cloudscraper फेल हो गया, दूसरा तरीका आजमाया जा रहा है: {e}")
 
@@ -51,19 +78,17 @@ def get_latest_links():
         with httpx.Client(headers=headers, follow_redirects=True, timeout=20.0) as client:
             resp = client.get(TARGET_URL)
             if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'lxml')
-                for anchor in soup.find_all('a'):
-                    link = anchor.get('href')
-                    if link and (link.endswith('.mp4') or link.endswith('.mkv')):
-                        if link.startswith('/'):
-                            base_url = TARGET_URL.split('/details')[0] if '/details' in TARGET_URL else TARGET_URL
-                            link = base_url + link
-                        if link not in links:
-                            links.append(link)
-                print(f"[Scraper] HTTPX के जरिए कुल {len(links)} लिंक्स मिले।")
-                return links
+                extracted = extract_netmirror_data(resp.text, base_url)
+                print(f"[Scraper] HTTPX के जरिए कुल {len(extracted['stream_links'])} प्लेयर और {len(extracted['download_links'])} डाउनलोड लिंक्स मिले।")
+                return extracted
     except Exception as e:
         print(f"[Scraper Critical Error] सभी बाईपास तरीके फेल रहे: {e}")
     
-    return links  # अगर सब फेल हो गया, तो खाली लिस्ट भेजेगा ताकि बोट क्रैश न हो
-                      
+    return result_data  # अगर सब फेल हो गया, तो खाली लिस्ट्स भेजेगा ताकि बोट क्रैश न हो
+
+if __name__ == "__main__":
+    # टेस्ट करने के लिए रन करें
+    data = get_latest_links()
+    print("प्लेयर लिंक्स:", data["stream_links"])
+    print("डाउनलोड लिंक्स:", data["download_links"])
+        
