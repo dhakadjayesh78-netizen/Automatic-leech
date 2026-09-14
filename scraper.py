@@ -3,6 +3,7 @@ import time
 import requests
 import cloudscraper
 import httpx
+import re
 from bs4 import BeautifulSoup
 
 # गिटहब वर्कफ़्लो एनवायरनमेंट से क्रेडेंशियल्स लोड करना
@@ -10,75 +11,91 @@ TARGET_URL = os.environ.get("TARGET_SCRAPE_URL", "https://netmirror.center")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")  
 LEECH_CHAT_ID = os.environ.get("BIN_CHANNEL") 
 
-def get_latest_movies_via_scraping():
-    """वेबसाइट के मेन कैटलॉग पेज को एक अलग एडवांस्ड तरीके से क्रॉल करना"""
-    print("[Engine] अल्टरनेटिव स्क्रैपिंग मेथड चालू किया जा रहा है...")
-    
-    # नेटमिरर के अलग-अलग पेज जहां लेटेस्ट कंटेंट होता है
+def get_html_via_proxy(url):
+    """गिटहब के ब्लॉक आईपी से बचने के लिए ऑल-इन-वन प्रॉक्सी और स्क्रैपिंग बाईपास लेयर"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive"
+    }
+
+    # तरीका 1: पब्लिक अनब्लॉकर प्रॉक्सी इंजन का उपयोग करके रिक्वेस्ट रीडायरेक्ट करना
+    # यह गिटहब के आईपी को छुपाकर एक साधारण यूजर के आईपी से रिक्वेस्ट भेजेगा
+    proxy_gateways = [
+        f"https://allorigins.win{requests.utils.quote(url)}",
+        f"https://corsproxy.io?{requests.utils.quote(url)}"
+    ]
+
+    for gateway in proxy_gateways:
+        print(f"[Engine] प्रॉक्सी टनल के जरिए कनेक्ट किया जा रहा है: {gateway[:50]}...")
+        try:
+            resp = requests.get(gateway, headers=headers, timeout=20)
+            if resp.status_code == 200:
+                response_data = resp.text
+                # AllOrigins प्रॉक्सी JSON के अंदर HTML देती है, उसे पार्स करना
+                if "contents" in response_data:
+                    import json
+                    return json.loads(response_data).get("contents", "")
+                if len(response_data) > 500:
+                    return response_data
+        except Exception as e:
+            print(f"[Proxy Warning] इस गेटवे पर एरर आया: {e}")
+
+    # तरीका 2: अगर प्रॉक्सी फेल हो तो डायरेक्ट क्लाउडस्क्रेपर का आखिरी प्रयास
+    try:
+        scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
+        )
+        resp = scraper.get(url, headers=headers, timeout=15)
+        if resp.status_code == 200 and len(resp.text) > 1000:
+            return resp.text
+    except Exception:
+        pass
+
+    return None
+
+def scrape_movies():
+    """पेज से मूवी डेटा और उनकी आईडी निकालना"""
     urls_to_try = [
         TARGET_URL.rstrip('/'),
         f"{TARGET_URL.rstrip('/')}/movies",
         f"{TARGET_URL.rstrip('/')}/trending"
     ]
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Alt-Used": "netmirror.center",
-        "Connection": "keep-alive"
-    }
-
-    scraper = cloudscraper.create_scraper(
-        browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
-    )
-
     found_movies = []
 
     for url in urls_to_try:
-        print(f"[Scraper] चेकिंग पेज: {url}")
-        html_content = None
+        html_content = get_html_via_proxy(url)
         
-        try:
-            # प्रयास 1: Cloudscraper
-            resp = scraper.get(url, headers=headers, timeout=15)
-            if resp.status_code == 200 and len(resp.text) > 1000:
-                html_content = resp.text
-        except Exception as e:
-            print(f"[Scraper Trace] Cloudscraper इस पेज पर फेल हुआ: {e}")
-
-        if not html_content:
-            try:
-                # प्रयास 2: HTTPX
-                with httpx.Client(headers=headers, follow_redirects=True, timeout=15.0) as client:
-                    resp = client.get(url)
-                    if resp.status_code == 200:
-                        html_content = resp.text
-            except Exception:
-                continue
-
         if html_content:
-            # HTML को पार्स करके मूवी लिंक्स और IDs निकालना
             soup = BeautifulSoup(html_content, 'lxml')
+            
+            # तरीका ए: एंकर टैग्स से आईडी ढूंढना
             for anchor in soup.find_all('a', href=True):
                 href = anchor['href']
                 title = anchor.get_text(strip=True) or anchor.get('title', '').strip()
                 
-                # नेटमिरर के यूआरएल स्ट्रक्चर (/watch/ID या /details/ID) से आईडी निकालना
-                if "/details/" in href or "/movie/" in href or "/watch/" in href:
-                    # यूआरएल में से केवल नंबर (ID) को अलग करना
+                if any(x in href for x in ["/details/", "/movie/", "/watch/"]):
                     parts = [p for p in href.split('/') if p]
                     movie_id = parts[-1] if parts else None
-                    
                     if movie_id and movie_id.isdigit():
                         movie_data = {"id": movie_id, "title": title if title else f"Movie {movie_id}"}
                         if movie_data not in found_movies:
                             found_movies.append(movie_data)
-
+            
+            # तरीका बी: अगर एंकर टैग्स न मिलें तो पूरे पेज में से रेगुलर एक्सप्रेशन (Regex) से मूवी आईडी निकालना
+            # नेटमिरर अक्सर जावास्क्रिप्ट ऑब्जेक्ट्स में आईडी रखता है
+            ids = re.findall(r'(?:id|movie_id)["\']?\s*:\s*["\']?(\d+)', html_content)
+            for m_id in ids:
+                movie_data = {"id": m_id, "title": f"NetMirror Content (ID: {m_id})"}
+                if movie_data not in [m for m in found_movies]:
+                    found_movies.append(movie_data)
+                    
     return found_movies
 
 def send_to_leech_bot(download_link, movie_title):
-    """टेलीग्राम चैनल/ग्रुप में लीच कमांड भेजना"""
+    """टेलीग्राम पर लीच कमांड भेजना"""
     if not BOT_TOKEN or not LEECH_CHAT_ID:
         print("[Telegram Error] BOT_TOKEN या BIN_CHANNEL सीक्रेट्स मिसिंग हैं!")
         return
@@ -96,33 +113,32 @@ def send_to_leech_bot(download_link, movie_title):
     try:
         resp = requests.post(telegram_url, json=payload, timeout=10)
         if resp.status_code == 200:
-            print(f"[Telegram] सफलतापूर्वक भेजा गया: {movie_title}")
+            print(f"[Telegram] सफलतापूर्वक ग्रुप में सेंड किया गया: {movie_title}")
         else:
-            print(f"[Telegram Error] बोट को भेजने में फेल: {resp.text}")
+            print(f"[Telegram Error] सेंड करने में दिक्कत आई: {resp.text}")
     except Exception as e:
         print(f"[Telegram Critical] कनेक्शन फेल: {e}")
 
 def main():
-    print("[Engine] बाईपास नेटमिरर क्रॉलर रन हो रहा है...")
+    print("[Engine] प्रॉक्सी-बाईपास नेटमिरर क्रॉलर रन हो रहा है...")
     
     try:
-        # अब हम JSON API के भरोसे नहीं बैठेंगे, सीधे HTML स्ट्रक्चर क्रॉल करेंगे
-        movies = get_latest_movies_via_scraping()
+        movies = scrape_movies()
         
         if movies:
-            print(f"[Engine] सफलता! कुल {len(movies)} मूवीज के रेजोल्यूशन रूट्स मिल गए हैं।")
+            print(f"[Engine] सफलता! प्रॉक्सी के जरिए कुल {len(movies)} मूवीज का डेटा मिल गया है।")
             for movie in movies:
                 title = movie["title"]
                 movie_id = movie["id"]
                 
-                # नेटमिरर टोकन और यूनिवर्सल एम्बेड प्लेयर लिंक जनरेशन
+                # डायरेक्ट डाउनलोड यूआरएल स्ट्रक्चर
                 direct_download_url = f"https://netmirror.center{movie_id}/file.mp4?token=a1b2c3d4e5f6"
                 
-                print(f"[Found] डायरेक्ट लिंक तैयार: {title} (ID: {movie_id})")
+                print(f"[Found] डायरेक्ट लिंक रेडी: {title} (ID: {movie_id})")
                 send_to_leech_bot(direct_download_url, title)
                 time.sleep(3)  # टेलीग्राम फ्लडिंग सेफ्टी डिले
         else:
-            print("[Engine Fatal] वेबसाइट का HTML रिस्पॉन्स पूरी तरह ब्लॉक है या कोई मूवी नहीं मिली।")
+            print("[Engine Fatal] प्रॉक्सी चैनल्स भी ब्लॉक हैं। नेटमिरर पूरी तरह प्रोटेक्टेड है।")
             
         print("[Engine] क्रॉलर का यह राउंड सफलतापूर्वक पूरा हुआ।")
     except Exception as e:
@@ -130,4 +146,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+                
