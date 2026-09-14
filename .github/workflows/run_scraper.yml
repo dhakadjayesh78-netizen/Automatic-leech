@@ -2,8 +2,8 @@ name: Auto Website Scraper
 
 on:
   schedule:
-    - cron: '0 * * * *' # यह हर 1 घंटे में गिटहब के बैकग्राउंड में स्क्रिप्ट को खुद चालू करेगा
-  workflow_dispatch: # इससे आप जब चाहें Actions टैब में जाकर बटन दबाकर भी बोट चालू कर सकते हैं
+    - cron: '0 * * * *' # हर 1 घंटे में बैकग्राउंड में स्क्रिप्ट खुद चालू होगी
+  workflow_dispatch: # मैन्युअल रूप से बटन दबाकर चालू करने के लिए
 
 jobs:
   run-scraper:
@@ -28,8 +28,7 @@ jobs:
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
         TELEGRAM_API: ${{ secrets.TELEGRAM_API }}
         TELEGRAM_HASH: ${{ secrets.TELEGRAM_HASH }}
-        BIN_CHANNEL: ${{ secrets.BIN_CHANNEL }} # 🌟 यह लाइन गिटहब सीक्रेट्स से बिन चैनल आईडी को कोड तक पहुँचाएगी
+        BIN_CHANNEL: ${{ secrets.BIN_CHANNEL }} # गिटहब सीक्रेट्स से बिन चैनल आईडी
         TARGET_SCRAPE_URL: "https://netmirror.center/"
       run: |
-        python scraper.py
-        
+        python -u scraper.py
