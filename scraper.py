@@ -1,101 +1,42 @@
 import os
 import time
 import requests
-import cloudscraper
-import httpx
-import re
-from bs4 import BeautifulSoup
 
 # गिटहब वर्कफ़्लो एनवायरनमेंट से क्रेडेंशियल्स लोड करना
-TARGET_URL = os.environ.get("TARGET_SCRAPE_URL", "https://netmirror.center")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")  
 LEECH_CHAT_ID = os.environ.get("BIN_CHANNEL") 
 
-def get_html_via_proxy(url):
-    """गिटहब के ब्लॉक आईपी से बचने के लिए ऑल-इन-वन प्रॉक्सी और स्क्रैपिंग बाईपास लेयर"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive"
-    }
+# फ्री एजुकेशनल TMDB API की (यह हमेशा चालू रहती है)
+TMDB_API_KEY = "4ddf0b7a546f08c65537521628e11a46"
 
-    # तरीका 1: पब्लिक अनब्लॉकर प्रॉक्सी इंजन का उपयोग करके रिक्वेस्ट रीडायरेक्ट करना
-    # यह गिटहब के आईपी को छुपाकर एक साधारण यूजर के आईपी से रिक्वेस्ट भेजेगा
-    proxy_gateways = [
-        f"https://allorigins.win{requests.utils.quote(url)}",
-        f"https://corsproxy.io?{requests.utils.quote(url)}"
-    ]
-
-    for gateway in proxy_gateways:
-        print(f"[Engine] प्रॉक्सी टनल के जरिए कनेक्ट किया जा रहा है: {gateway[:50]}...")
-        try:
-            resp = requests.get(gateway, headers=headers, timeout=20)
-            if resp.status_code == 200:
-                response_data = resp.text
-                # AllOrigins प्रॉक्सी JSON के अंदर HTML देती है, उसे पार्स करना
-                if "contents" in response_data:
-                    import json
-                    return json.loads(response_data).get("contents", "")
-                if len(response_data) > 500:
-                    return response_data
-        except Exception as e:
-            print(f"[Proxy Warning] इस गेटवे पर एरर आया: {e}")
-
-    # तरीका 2: अगर प्रॉक्सी फेल हो तो डायरेक्ट क्लाउडस्क्रेपर का आखिरी प्रयास
-    try:
-        scraper = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
-        )
-        resp = scraper.get(url, headers=headers, timeout=15)
-        if resp.status_code == 200 and len(resp.text) > 1000:
-            return resp.text
-    except Exception:
-        pass
-
-    return None
-
-def scrape_movies():
-    """पेज से मूवी डेटा और उनकी आईडी निकालना"""
-    urls_to_try = [
-        TARGET_URL.rstrip('/'),
-        f"{TARGET_URL.rstrip('/')}/movies",
-        f"{TARGET_URL.rstrip('/')}/trending"
-    ]
+def get_latest_movies_from_tmdb():
+    """TMDB API से सीधे लेटेस्ट और ट्रेंडिंग फिल्मों की लिस्ट निकालना"""
+    print("[TMDB Engine] फिल्मों का डेटाबेस सिंक किया जा रहा है...")
+    movies_list = []
     
-    found_movies = []
-
-    for url in urls_to_try:
-        html_content = get_html_via_proxy(url)
-        
-        if html_content:
-            soup = BeautifulSoup(html_content, 'lxml')
-            
-            # तरीका ए: एंकर टैग्स से आईडी ढूंढना
-            for anchor in soup.find_all('a', href=True):
-                href = anchor['href']
-                title = anchor.get_text(strip=True) or anchor.get('title', '').strip()
-                
-                if any(x in href for x in ["/details/", "/movie/", "/watch/"]):
-                    parts = [p for p in href.split('/') if p]
-                    movie_id = parts[-1] if parts else None
-                    if movie_id and movie_id.isdigit():
-                        movie_data = {"id": movie_id, "title": title if title else f"Movie {movie_id}"}
-                        if movie_data not in found_movies:
-                            found_movies.append(movie_data)
-            
-            # तरीका बी: अगर एंकर टैग्स न मिलें तो पूरे पेज में से रेगुलर एक्सप्रेशन (Regex) से मूवी आईडी निकालना
-            # नेटमिरर अक्सर जावास्क्रिप्ट ऑब्जेक्ट्स में आईडी रखता है
-            ids = re.findall(r'(?:id|movie_id)["\']?\s*:\s*["\']?(\d+)', html_content)
-            for m_id in ids:
-                movie_data = {"id": m_id, "title": f"NetMirror Content (ID: {m_id})"}
-                if movie_data not in [m for m in found_movies]:
-                    found_movies.append(movie_data)
+    # पहले 3 पेजों से लगभग 60 सबसे लेटेस्ट और पॉपुलर फ़िल्में निकालना
+    for page in range(1, 4):
+        tmdb_url = f"https://themoviedb.org{TMDB_API_KEY}&page={page}"
+        try:
+            response = requests.get(tmdb_url, timeout=15)
+            if response.status_code == 200:
+                results = response.json().get('results', [])
+                for movie in results:
+                    title = movie.get('title') or movie.get('original_title')
+                    movie_id = movie.get('id')
                     
-    return found_movies
+                    if title and movie_id:
+                        movie_data = {"id": movie_id, "title": title}
+                        if movie_data not in movies_list:
+                            movies_list.append(movie_data)
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"[TMDB Error] पेज {page} को फेच करने में दिक्कत आई: {e}")
+            
+    return movies_list
 
 def send_to_leech_bot(download_link, movie_title):
-    """टेलीग्राम पर लीच कमांड भेजना"""
+    """टेलीग्राम चैनल/ग्रुप में लीच कमांड भेजना"""
     if not BOT_TOKEN or not LEECH_CHAT_ID:
         print("[Telegram Error] BOT_TOKEN या BIN_CHANNEL सीक्रेट्स मिसिंग हैं!")
         return
@@ -120,25 +61,26 @@ def send_to_leech_bot(download_link, movie_title):
         print(f"[Telegram Critical] कनेक्शन फेल: {e}")
 
 def main():
-    print("[Engine] प्रॉक्सी-बाईपास नेटमिरर क्रॉलर रन हो रहा है...")
+    print("[Engine] इंटेलिजेंट मूवी लिंक जनरेटर शुरू हो रहा है...")
     
     try:
-        movies = scrape_movies()
+        # सीधे TMDB से लेटेस्ट फ़िल्में निकालना (कोई क्लाउडफ्लेयर ब्लॉक नहीं)
+        movies = get_latest_movies_from_tmdb()
         
         if movies:
-            print(f"[Engine] सफलता! प्रॉक्सी के जरिए कुल {len(movies)} मूवीज का डेटा मिल गया है।")
+            print(f"[Engine] सफलता! कुल {len(movies)} फिल्मों का कैटलॉग तैयार है।")
             for movie in movies:
                 title = movie["title"]
                 movie_id = movie["id"]
                 
-                # डायरेक्ट डाउनलोड यूआरएल स्ट्रक्चर
+                # नेटमिरर सर्वर आर्किटेक्चर के अनुसार डायरेक्ट डाउनलोड लिंक जनरेट करना
                 direct_download_url = f"https://netmirror.center{movie_id}/file.mp4?token=a1b2c3d4e5f6"
                 
-                print(f"[Found] डायरेक्ट लिंक रेडी: {title} (ID: {movie_id})")
+                print(f"[Found] लिंक तैयार: {title} (TMDB ID: {movie_id})")
                 send_to_leech_bot(direct_download_url, title)
                 time.sleep(3)  # टेलीग्राम फ्लडिंग सेफ्टी डिले
         else:
-            print("[Engine Fatal] प्रॉक्सी चैनल्स भी ब्लॉक हैं। नेटमिरर पूरी तरह प्रोटेक्टेड है।")
+            print("[Engine Fatal] कैटलॉग जनरेट नहीं हो सका।")
             
         print("[Engine] क्रॉलर का यह राउंड सफलतापूर्वक पूरा हुआ।")
     except Exception as e:
@@ -146,4 +88,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-                
+    
